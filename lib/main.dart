@@ -1,125 +1,155 @@
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_audio_capture/flutter_audio_capture.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-void main() {
-  runApp(const MyApp());
+// Constants
+const SAMPLE_RATE = 48000; // 48 kHz
+const DURATION = 60; // Duration in seconds to capture audio
+const CHUNK = 2048; // Number of audio samples per frame
+const CHANNELS = 1; // Single microphone input
+
+FlutterAudioCapture plugin = FlutterAudioCapture();
+List<double> audioData = [];
+
+void listener(dynamic obj) {
+  var buffer = Float64List.fromList(obj.cast<double>());
+  audioData.addAll(buffer);
+  print(buffer);
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// Callback function if flutter_audio_capture failure to register
+// audio capture stream subscription.
+void onError(Object e) {
+  print(e);
+}
 
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
+// Function to simulate audio capture (replace this with real microphone input handling if needed)
+Future<List<double>> captureAudio(int duration, int sampleRate) async {
+  await plugin.init();
+  await plugin.start(listener, onError, sampleRate: 16000, bufferSize: 3000);
+
+  await plugin.stop();
+
+  return audioData;
+
+
+
+  print("Starting audio capture simulation...");
+  // Simulate an audio signal (this is a placeholder for actual audio capture)
+  List<double> signal = List<double>.generate(duration * sampleRate, (i) {
+    return sin(2 * pi * 440 * i / sampleRate); // Example of a 440Hz tone
+  });
+  print("Audio capture finished.");
+  return signal;
+}
+
+// Function to down-convert the signal to complex baseband (ignoring the imaginary part for simplicity)
+List<double> downConvert(List<double> signal, double fc, int samplingRate) {
+  print("Down-converting signal to baseband...");
+  List<double> downConverted = List<double>.generate(signal.length, (i) {
+    double t = i / samplingRate;
+    return signal[i] * cos(2 * pi * fc * t); // Simplified without complex numbers
+  });
+  return downConverted;
+}
+
+// Function to extract phase information from the signal
+List<double> extractPhase(List<double> signal) {
+  print("Extracting phase information...");
+  List<double> phase = List<double>.generate(signal.length, (i) {
+    return atan2(signal[i], 1); // Simplified phase extraction
+  });
+  return phase;
+}
+
+// Function to smooth the phase signal using a moving average
+List<double> smoothSignal(List<double> signal, int windowSize) {
+  List<double> smoothed = List<double>.generate(signal.length, (i) {
+    int start = max(0, i - windowSize ~/ 2);
+    int end = min(signal.length - 1, i + windowSize ~/ 2);
+    double sum = 0.0;
+    for (int j = start; j <= end; j++) {
+      sum += signal[j];
+    }
+    return sum / (end - start + 1);
+  });
+  return smoothed;
+}
+
+// Function to extract heart rate from the phase signal over windows
+List<double?> extractHeartRatesWindowed(List<double> phaseSignal, int samplingRate, int windowDuration) {
+  print("Extracting breath and heart rates over time...");
+  int windowSize = windowDuration * samplingRate;
+  int numWindows = phaseSignal.length ~/ windowSize;
+  List<double?> heartRates = [];
+
+  for (int i = 0; i < numWindows; i++) {
+    List<double> windowSignal = phaseSignal.sublist(i * windowSize, (i + 1) * windowSize);
+    double heartRate = _calculateHeartRate(windowSignal, samplingRate);
+    heartRates.add(heartRate);
   }
+
+  return heartRates;
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+// Helper function to calculate heart rate from the signal
+double _calculateHeartRate(List<double> signal, int samplingRate) {
+  // Perform a simplified frequency analysis using zero crossings
+  int zeroCrossings = 0;
+  for (int i = 1; i < signal.length; i++) {
+    if (signal[i - 1] * signal[i] < 0) {
+      zeroCrossings++;
+    }
+  }
+  double frequency = zeroCrossings / (2 * (signal.length / samplingRate));
+  double heartRateBpm = frequency * 60;
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  // Check if it's in the typical heart rate range
+  if (heartRateBpm >= 48 && heartRateBpm <= 120) {
+    return heartRateBpm;
+  }
+  return double.nan;
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  if (await Permission.audio.request().isDenied) {
+    throw Exception("Need audio recording permission");
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
-    );
+  // Capture audio data (replace this with actual audio capturing in real use case)
+  List<double> audioSignal = await captureAudio(DURATION, SAMPLE_RATE);
+
+  // Down-convert the audio signal
+  const double fc = 19000; // Example center frequency (19 kHz)
+  List<double> basebandSignal = downConvert(audioSignal, fc, SAMPLE_RATE);
+
+  // Extract phase information from the baseband signal
+  List<double> signalPhase = extractPhase(basebandSignal);
+
+  // Smooth the phase signal
+  List<double> signalPhaseSmoothed = smoothSignal(signalPhase, 100);
+
+  // Perform windowed heart rate extraction
+  List<double?> heartRates = extractHeartRatesWindowed(signalPhaseSmoothed, SAMPLE_RATE, 5);
+
+  // Calculate average, max, and min heart rates
+  List<double> validHeartRates = heartRates.where((hr) => hr != null && hr!.isFinite).cast<double>().toList();
+
+  if (validHeartRates.isNotEmpty) {
+    double avgHeartRate = validHeartRates.reduce((a, b) => a + b) / validHeartRates.length;
+    double maxHeartRate = validHeartRates.reduce(max);
+    double minHeartRate = validHeartRates.reduce(min);
+
+    print("Estimated Average Heart Rate: ${avgHeartRate.toStringAsFixed(2)} BPM");
+    print("Estimated Maximum Heart Rate: ${maxHeartRate.toStringAsFixed(2)} BPM");
+    print("Estimated Minimum Heart Rate: ${minHeartRate.toStringAsFixed(2)} BPM");
+  } else {
+    print("No valid heart rate data found.");
   }
 }
